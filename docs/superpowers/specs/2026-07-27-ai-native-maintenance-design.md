@@ -46,6 +46,7 @@ are one bug — an unenforced contract — reported four times. Fixing them indi
 | Autonomy gate | Triage agent tiers issues; only tier 1 is auto-attempted |
 | Contract source | `github.com/open-telemetry/semantic-conventions-genai`, pinned SHA |
 | Fix methodology | Mandatory TDD, mechanically enforced RED→GREEN |
+| Knowledge portability | Agent-agnostic: `AGENTS.md` canonical, OKF v0.2 for empirical knowledge |
 
 ## Architecture
 
@@ -62,15 +63,21 @@ packages/opentelemetry-semantic-conventions-ai/
   .../_generated/contract.py    weaver-generated: required/recommended attrs per
                                 span kind, enum values, payload JSON Schemas
   .../conformance.py            hand-written harness consuming contract.py
-CLAUDE.md                   thin router, not a dumping ground
-packages/*/CLAUDE.md        per-SDK quirks: streaming shapes, response oddities,
-                            cassette notes
-.claude/skills/             triage-issue/, fix-instrumentation-bug/,
-                            add-instrumentation/, record-cassette/,
-                            semconv-conformance/
-docs/ai/lessons/            accumulated maintainer taste, one file per lesson,
-                            written by responder, merged only via human-reviewed PR
+AGENTS.md                   canonical instructions; CLAUDE.md is a symlink to it
+packages/*/AGENTS.md        per-package: layout, commands, conventions
+docs/ai/procedures/*.md     plain-markdown procedures, readable by any agent:
+                            fix-instrumentation-bug, add-instrumentation,
+                            record-cassette, triage-issue, semconv-conformance
+.claude/skills/*/SKILL.md   THIN WRAPPERS pointing at docs/ai/procedures/.
+                            No content of their own.
+docs/ai/knowledge/          OKF v0.2 bundle: index.md, log.md, one concept per file.
+                            Accumulated lessons + empirical SDK behaviour, with
+                            provenance, trust tier, and stale_after.
 ```
+
+The substrate is deliberately portable across agent implementations — see
+[Agent portability](#agent-portability) below. No knowledge lives in a Claude-Code-specific
+file; `.claude/` contains only pointers.
 
 ### Layer 2 — Agent roles (`.claude/agents/`)
 
@@ -80,7 +87,7 @@ docs/ai/lessons/            accumulated maintainer taste, one file per lesson,
 | `fixer` | Failing test → fix → self-verify → draft PR |
 | `recorder` | **Isolated.** Holds provider keys. Never reads issue or PR text. |
 | `reviewer` | Adversarial pass attempting to refute the fix, before a human sees it |
-| `responder` | Applies maintainer review feedback; writes the lesson file |
+| `responder` | Applies maintainer review feedback; writes the OKF lesson concept |
 
 `recorder` is a separate agent by architectural necessity, not convenience. It is the only
 component holding live provider keys and must be structurally incapable of reading
@@ -138,6 +145,56 @@ Two hard constraints:
   `tags: ["semconv:enforcing"]` vs `tags: ["semconv:warn"]`, so the migration frontier is
   visible in one `grep` and flipping a package is a one-line reviewable change.
 
+## Agent portability
+
+Requirement: the knowledge base must be usable by agents other than Claude Code. No
+knowledge may be locked in a vendor-specific file.
+
+Mechanisms, layer by layer:
+
+| Layer | Portability mechanism |
+|---|---|
+| Contract | A pytest suite. Universally runnable; needs no agent at all. |
+| Instructions | `AGENTS.md` is canonical. `CLAUDE.md` is a **symlink** (git mode `120000`). |
+| Procedures | Plain markdown in `docs/ai/procedures/`. `.claude/skills/*/SKILL.md` are thin wrappers that point at them and hold no content. |
+| Empirical knowledge | OKF v0.2 bundle — a vendor-neutral spec, and plain markdown regardless. |
+
+The symlink approach is not invented here: upstream `semantic-conventions-genai` already
+ships `AGENTS.md` as a regular file with `CLAUDE.md` as a 9-byte symlink to it. Adopting
+the same layout keeps us consistent with the contract repo.
+
+### Why OKF, and where it does not apply
+
+OKF (Open Knowledge Format, Google, published 2026-06-12, Apache-2.0, spec v0.2) is a
+directory of markdown files with YAML frontmatter, one concept per file. It is used for
+**empirical** knowledge only — accumulated lessons and observed SDK behaviour. Imperative
+content ("run `nx run <pkg>:test`") stays in `AGENTS.md`; declarative content ("Anthropic
+returns an empty content block on tool-only turns") becomes an OKF concept.
+
+The split is *imperative → `AGENTS.md`, empirical → OKF.*
+
+OKF fields carry real weight for this use case rather than being ceremony:
+
+| Field | Use here |
+|---|---|
+| `generated: {by, at}`, `verified: []` | Trust tiers *unverified → machine-confirmed → human-reviewed*, matching the rule that a `responder`-written lesson is untrusted until a human approves its PR |
+| `stale_after` | SDK-behaviour facts rot on SDK bumps; mechanical expiry replaces a rotting doc pile |
+| `sources` | Links a lesson back to the review comment that produced it |
+| `status: draft\|stable\|deprecated` | Lesson lifecycle |
+| Actor convention `<producer>/<version>`, `human:<id>` | Attribution once multiple agent types write to the bundle |
+
+Risks, accepted knowingly: the spec is ~6 weeks old at v0.2 and will churn, and no agent
+has native OKF support — pointing agents at the bundle is required. Both are acceptable
+because the failure mode is benign: an abandoned OKF is still a directory of markdown with
+sensible frontmatter. That asymmetry is the reason to adopt it.
+
+### Runner indirection
+
+Workflows invoke agents through a single thin composite action rather than calling a
+vendor action inline at six call sites. Swapping or adding an agent implementation is then
+one file, not a rewrite. The knowledge base being portable is worthless if the
+orchestration hard-codes one vendor in every workflow.
+
 ## The TDD gate
 
 "Write a failing test first" as a prompt instruction is unverifiable — the agent will claim
@@ -175,8 +232,10 @@ claim that it did.
    `ai:tier1` + `pkg:<name>` + a repro hypothesis. Tier 2
    (needs maintainer decision) gets the options drafted and the maintainer @-mentioned —
    **no PR**. Tier 3 is answered or closed.
-2. `ai:tier1` → `fixer`: loads root `CLAUDE.md` → package `CLAUDE.md` → relevant skill →
-   lessons index. Writes commit 1 (failing test). If a new cassette is required, writes
+2. `ai:tier1` → `fixer`: loads root `AGENTS.md` → package `AGENTS.md` → the relevant
+   procedure in `docs/ai/procedures/` → `docs/ai/knowledge/index.md`, retrieving concepts
+   tagged for the affected package and ignoring any whose `stale_after` has passed.
+   Writes commit 1 (failing test). If a new cassette is required, writes
    `packages/<pkg>/tests/.recording-manifest.yaml` — declaring the target module, call,
    and arguments to record, and nothing free-form — applies `ai:needs-recording`, and
    stops at draft.
@@ -193,8 +252,13 @@ claim that it did.
 
 `changes_requested` → `responder` applies the change, preserving test-first discipline for
 any new behavior, then classifies the comment as one-off or generalizable. Generalizable
-feedback becomes `docs/ai/lessons/<slug>.md` **in the same PR**, so knowledge enters the
-substrate only through normal human review. Nothing self-modifies unreviewed. This loop is
+feedback becomes an OKF concept under `docs/ai/knowledge/` **in the same PR**, written with
+`generated: {by: <agent>/<version>, at: <ts>}` and no `verified` entry. Merging the PR is
+what adds the `verified: [{by: human:<maintainer>, at: ...}]` entry, promoting the concept
+to the human-reviewed trust tier. `log.md` records the addition.
+
+So knowledge enters the substrate only through normal human review, and its trust level is
+recorded in the file rather than assumed. Nothing self-modifies unreviewed. This loop is
 what stops the same correction being needed thirty times.
 
 ### Flow C — scheduled conformance sweep
@@ -214,7 +278,7 @@ guard below — it is a different workflow with a different, narrower write scop
 |---|---|
 | Robot-authored 499 backlog | Max 5 in-flight AI PRs, enforced pre-flight |
 | Infinite retry burn | 2 attempts per issue, then `ai:needs-human` and stop |
-| Blast radius | CI path guard: `fixer` may not touch `.github/**`, `.claude/**`, `.semconv/**`, release config, or version fields |
+| Blast radius | CI path guard, per agent role: `fixer` may not touch `.github/**`, `.claude/**`, `.semconv/**`, `docs/ai/**`, release config, or version fields. `responder` may additionally write `docs/ai/knowledge/**` and nothing else new. Only the sweep may touch `.semconv/**`. |
 | Prompt injection | Untrusted text passed as delimited data with explicit preamble; `recorder` never receives it |
 | Secret leak via cassette | gitleaks + provider-key patterns, fail closed |
 | Runaway spend | Per-run token cap; provider keys used by `recorder` carry their own monthly spend limit set at the provider, not in CI |
@@ -231,8 +295,10 @@ Four specs, each independently valuable.
 1. **Contract** — no agents. Vendor registry, weaver codegen, conformance harness,
    warn-only rollout, land the 5 packages that already have compliance tests. Ships real
    value even if work stops here.
-2. **Substrate** — root `CLAUDE.md` as router, 32 per-package `CLAUDE.md` (agent-bootstrapped,
-   human-reviewed), skills, lessons index.
+2. **Substrate** — root `AGENTS.md` plus `CLAUDE.md` symlink, 32 per-package `AGENTS.md`
+   (agent-bootstrapped, human-reviewed), procedures in `docs/ai/procedures/` with thin
+   `.claude/skills/` wrappers, OKF bundle scaffold (`index.md`, `log.md`, `okf_version`),
+   and a CI check asserting no knowledge content lives under `.claude/`.
 3. **Fix loop** — TDD gate CI, `fixer` + `recorder`, path guard, scrub gate. Piloted
    manually on 3 hand-picked issues before any trigger is wired.
 4. **Autonomy** — `triage`, `reviewer`, `responder`, sweep, concurrency and budget guardrails.
@@ -250,3 +316,15 @@ bad PRs.
 - The existing 499-PR backlog. Acknowledged as the larger constraint; deferred by decision.
 - Auto-merge, at any tier.
 - Agent authority over releases, versioning, or `.github` configuration.
+- Native OKF retrieval tooling. Agents are pointed at the bundle; no indexing service.
+
+## References
+
+- [open-telemetry/semantic-conventions-genai](https://github.com/open-telemetry/semantic-conventions-genai)
+  — the contract. Weaver registry, `stability: development`, no tags.
+- [OKF SPEC.md](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+  — Open Knowledge Format v0.2, Apache-2.0.
+- [How the Open Knowledge Format can improve data sharing](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing)
+  — Google Cloud announcement, 2026-06-12.
+- [OKF: Redefining Knowledge Bases for AI Agents](https://www.analyticsvidhya.com/blog/2026/07/open-knowledge-format/)
+  — independent overview.
