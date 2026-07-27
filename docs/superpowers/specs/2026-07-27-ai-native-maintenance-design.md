@@ -111,6 +111,10 @@ for payload shapes (`gen-ai-input-messages.json`, `gen-ai-output-messages.json`,
 openllmetry packages. It declares itself the canonical home for GenAI conventions,
 superseding the gen-ai directories in the main semconv repo.
 
+`_generated/contract.py` is **committed to the repo**, not generated at test time. CI
+regenerates and fails on diff. This makes every contract change a reviewable line-level
+diff rather than an invisible behavioural shift, and keeps test runs offline.
+
 Each instrumentation package gets one test importing the shared harness, parametrized over
 the spans it emits. The harness validates emitted attributes against the generated
 contract and validates message payloads against upstream's JSON Schemas directly.
@@ -129,7 +133,10 @@ Two hard constraints:
   tags**. Pin a SHA and bump deliberately. Tracking `main` would red-CI all 32 packages on
   a third party's merge.
 - The harness lands **warn-only**, flipping to enforcing per-package as each is fixed.
-  Enabling enforcement repo-wide on day one red-CIs the entire repository.
+  Enabling enforcement repo-wide on day one red-CIs the entire repository. Enforcement
+  state is declared per package in its `project.json` under
+  `tags: ["semconv:enforcing"]` vs `tags: ["semconv:warn"]`, so the migration frontier is
+  visible in one `grep` and flipping a package is a one-line reviewable change.
 
 ## The TDD gate
 
@@ -163,12 +170,16 @@ claim that it did.
 ### Flow A — issue to merged PR
 
 1. `issues[opened]` → `triage`: dedupe against open and closed-in-90d; classify.
-   Tier 1 (mechanical) gets `ai:tier1` + `pkg:<name>` + a repro hypothesis. Tier 2
+   Tier 1 (mechanical: a defect or enhancement whose correct behaviour is determined by
+   the semconv contract, an existing test, or explicit upstream SDK behaviour) gets
+   `ai:tier1` + `pkg:<name>` + a repro hypothesis. Tier 2
    (needs maintainer decision) gets the options drafted and the maintainer @-mentioned —
    **no PR**. Tier 3 is answered or closed.
 2. `ai:tier1` → `fixer`: loads root `CLAUDE.md` → package `CLAUDE.md` → relevant skill →
    lessons index. Writes commit 1 (failing test). If a new cassette is required, writes
-   `.recording-manifest.yaml`, applies `ai:needs-recording`, and stops at draft.
+   `packages/<pkg>/tests/.recording-manifest.yaml` — declaring the target module, call,
+   and arguments to record, and nothing free-form — applies `ai:needs-recording`, and
+   stops at draft.
    Otherwise writes commit 2 and opens a draft PR.
 3. `ai:needs-recording` → `recorder` in a human-approved GitHub Environment: reads only the
    manifest, records with live keys, runs the deterministic scrubber, secret-scans
@@ -189,8 +200,13 @@ what stops the same correction being needed thirty times.
 ### Flow C — scheduled conformance sweep
 
 Bump pin → regenerate → run harness across all 32 packages → file one pre-diagnosed
-`ai:tier1` issue per gap, carrying the exact failing assertion. **Rate-limited to N issues
-per run.** First enable will find well over a hundred gaps; unthrottled it buries the queue.
+`ai:tier1` issue per gap, carrying the exact failing assertion. **Rate-limited to 10 issues
+per run, weekly.** First enable will find well over a hundred gaps; unthrottled it buries
+the queue.
+
+The sweep is the only actor permitted to modify `.semconv/`, and it does so in a dedicated
+PR that changes nothing else. This is deliberately not an exception to the `fixer` path
+guard below — it is a different workflow with a different, narrower write scope.
 
 ## Guardrails
 
@@ -201,7 +217,7 @@ per run.** First enable will find well over a hundred gaps; unthrottled it burie
 | Blast radius | CI path guard: `fixer` may not touch `.github/**`, `.claude/**`, `.semconv/**`, release config, or version fields |
 | Prompt injection | Untrusted text passed as delimited data with explicit preamble; `recorder` never receives it |
 | Secret leak via cassette | gitleaks + provider-key patterns, fail closed |
-| Runaway spend | Per-run token cap; separate monthly cap on recorder provider keys |
+| Runaway spend | Per-run token cap; provider keys used by `recorder` carry their own monthly spend limit set at the provider, not in CI |
 | Systemic failure | Repo variable `AI_MAINTAINER_ENABLED=false`, checked at top of every workflow |
 | Trust laundering | Dedicated bot identity, `ai-authored` label, **auto-merge never enabled** |
 
