@@ -37,12 +37,13 @@ These correct the design document's estimates. Verify before relying on them; th
 | `.semconv/Makefile` | `vendor`, `resolve`, `generate`, `check` targets; owns all Docker invocation |
 | `.semconv/registry/` | Vendored copy of upstream `model/` at the pinned SHA |
 | `.semconv/.build/` | Gitignored scratch: cloned upstream dep, `resolved.json` |
-| `scripts/gen_contract.py` | Pure transform: `resolved.json` → `generated.py`. No network, no Docker. |
+| `.../semconv_ai/_contract/_generator.py` | Pure transform: `resolved.json` → `generated.py`. No network, no Docker. Lives inside the semconv package so `nx run <pkg>:test` covers it. |
 | `.../semconv_ai/_contract/__init__.py` | Public types: `Level`, `AttributeSpec`, `SpanSpec` |
 | `.../semconv_ai/_contract/generated.py` | **Committed generated artifact.** Never hand-edited. |
 | `.../semconv_ai/_contract/extensions.py` | Declared non-standard `gen_ai.*` attributes, with rationale |
 | `.../semconv_ai/conformance.py` | The harness: pure checker + pytest adapter |
-| `packages/*/tests/test_conformance.py` | One per package, wiring the harness to that package's spans |
+| `.../semconv_ai/_testing_conformance.py` | Shared per-package test helper, mirroring the existing `_testing.py` precedent |
+| `packages/*/tests/test_conformance.py` | One per package: a few lines wiring the shared helper to that package's fixtures |
 | `.github/workflows/ci.yml` | New `semconv-contract` job |
 
 The checker is deliberately pure — it takes a `Mapping[str, Any]` of attributes, not an OTel object — so it is testable without spinning up a tracer. A thin adapter converts `ReadableSpan`.
@@ -127,10 +128,10 @@ resolve: $(FILTERED)
 
 ## Regenerate the committed contract module.
 generate: resolve
-	cd .. && uv run --project packages/opentelemetry-semantic-conventions-ai \
-		python scripts/gen_contract.py \
-		--resolved .semconv/$(BUILD)/resolved.json \
-		--out packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/generated.py
+	cd ../packages/opentelemetry-semantic-conventions-ai && uv run python -m \
+		opentelemetry.semconv_ai._contract._generator \
+		--resolved ../../.semconv/$(BUILD)/resolved.json \
+		--out opentelemetry/semconv_ai/_contract/generated.py
 
 ## Fail if the committed artifact is stale.
 check: generate
@@ -400,34 +401,32 @@ git commit -m "feat(semconv): add contract data model"
 ### Task 3: Contract generator
 
 **Files:**
-- Create: `scripts/gen_contract.py`
+- Create: `packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/_generator.py`
 - Create: `packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/generated.py` (via the generator, not by hand)
-- Test: `tests/test_gen_contract.py` (repo root `tests/`, since the script is repo-level)
+- Test: `packages/opentelemetry-semantic-conventions-ai/tests/test_generator.py`
+
+**Placement note:** the generator lives inside the semconv package rather than a
+repo-root `scripts/` directory. The repo has no root-level Python project — no root
+`pyproject.toml`, no root `tests/`, and Nx orchestrates everything per-package — so a
+root-level test would never run in CI. As a package module it is covered by the existing
+`nx run opentelemetry-semantic-conventions-ai:test` target with no new CI job.
 
 **Interfaces:**
 - Consumes: `Level`, `AttributeSpec`, `SpanSpec`, `enum_members_of`, `parse_requirement_level` from Task 2.
-- Produces: `build_specs(resolved: dict) -> dict[str, SpanSpec]` and `render(specs) -> str` in `scripts/gen_contract.py`. The generated module exposes `SPANS: dict[str, SpanSpec]` and `CONTRACT_REF: str`. Task 4 imports `SPANS`.
+- Produces: `build_specs(resolved: dict) -> dict[str, SpanSpec]` and `render(specs, ref: str) -> str` in `opentelemetry.semconv_ai._contract._generator`, runnable as `python -m opentelemetry.semconv_ai._contract._generator`. The generated module exposes `SPANS: dict[str, SpanSpec]` and `CONTRACT_REF: str`. Task 4 imports `SPANS`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/test_gen_contract.py`:
+Create `packages/opentelemetry-semantic-conventions-ai/tests/test_generator.py`:
 
 ```python
 import importlib.util
 import sys
-from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-sys.path.insert(
-    0, str(REPO_ROOT / "packages" / "opentelemetry-semantic-conventions-ai")
-)
-
-from gen_contract import build_specs, render  # noqa: E402
-
-from opentelemetry.semconv_ai._contract import Level  # noqa: E402
+from opentelemetry.semconv_ai._contract import Level
+from opentelemetry.semconv_ai._contract._generator import build_specs, render
 
 
 RESOLVED_FIXTURE = {
@@ -520,34 +519,29 @@ class TestRender:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/gal.kleinman/dev/openllmetry && python3 -m pytest tests/test_gen_contract.py -v`
+Run: `cd packages/opentelemetry-semantic-conventions-ai && uv run pytest tests/test_generator.py -v`
 
-Expected: FAIL — `ModuleNotFoundError: No module named 'gen_contract'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'opentelemetry.semconv_ai._contract._generator'`
 
 - [ ] **Step 3: Write the generator**
 
-Create `scripts/gen_contract.py`:
+Create `packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/_generator.py`:
 
 ```python
-#!/usr/bin/env python3
 """Generate the committed semconv contract module from weaver's resolved JSON.
 
 Pure transform: reads a JSON file, writes a Python file. No network, no Docker.
-Invoked by `make -C .semconv generate`.
+Invoked by `make -C .semconv generate` as:
+
+    python -m opentelemetry.semconv_ai._contract._generator --resolved ... --out ...
 """
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Dict
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(
-    0, str(REPO_ROOT / "packages" / "opentelemetry-semantic-conventions-ai")
-)
-
-from opentelemetry.semconv_ai._contract import (  # noqa: E402
+from opentelemetry.semconv_ai._contract import (
     AttributeSpec,
     Level,
     SpanSpec,
@@ -557,8 +551,8 @@ from opentelemetry.semconv_ai._contract import (  # noqa: E402
 
 BANNER = '''"""The OpenTelemetry GenAI semantic-convention contract, as Python.
 
-DO NOT EDIT. Generated by scripts/gen_contract.py from the registry vendored in
-.semconv/, pinned at the SHA below. Regenerate with:
+DO NOT EDIT. Generated by opentelemetry.semconv_ai._contract._generator from the
+registry vendored in .semconv/, pinned at the SHA below. Regenerate with:
 
     make -C .semconv generate
 """
@@ -639,7 +633,9 @@ def render(specs: Dict[str, SpanSpec], ref: str) -> str:
 
 
 def _pinned_ref() -> str:
-    versions = REPO_ROOT / ".semconv" / "versions.env"
+    # .../packages/<pkg>/opentelemetry/semconv_ai/_contract/_generator.py -> repo root
+    repo_root = Path(__file__).resolve().parents[5]
+    versions = repo_root / ".semconv" / "versions.env"
     for line in versions.read_text().splitlines():
         if line.startswith("SEMCONV_GENAI_REF="):
             return line.split("=", 1)[1].strip()
@@ -668,7 +664,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/gal.kleinman/dev/openllmetry && python3 -m pytest tests/test_gen_contract.py -v`
+Run: `cd packages/opentelemetry-semantic-conventions-ai && uv run pytest tests/test_generator.py -v`
 
 Expected: PASS, 9 passed.
 
@@ -703,7 +699,8 @@ Expected: exit 0, no diff output.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add scripts/gen_contract.py tests/test_gen_contract.py \
+git add packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/_generator.py \
+        packages/opentelemetry-semantic-conventions-ai/tests/test_generator.py \
         packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/generated.py
 git commit -m "feat(semconv): generate contract module from vendored registry"
 ```
@@ -1322,20 +1319,153 @@ git add packages/opentelemetry-instrumentation-anthropic/project.json
 git commit -m "chore(anthropic): tag semconv rollout state"
 ```
 
-- [ ] **Step 4: Replicate for each remaining in-scope package**
+- [ ] **Step 4: Extract the shared helper**
 
-For each package in the in-scope list, one commit per package:
+Per-package tests must not be verbatim copies of each other. Extract the shared logic into
+the semconv package, mirroring the existing `_testing.py` precedent that packages already
+import with a single line.
 
-1. Copy `tests/test_conformance.py` from the anthropic package.
-2. Set `CONTRACT_GROUP` per the mapping table above.
-3. Replace the client fixture, model, and call with ones taken from that package's existing tests, reusing an existing cassette. **Do not record new cassettes** — this task requires no API keys.
+Create `packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_testing_conformance.py`:
+
+```python
+"""Shared conformance-check helper for instrumentation package test suites.
+
+Mirrors the existing `_testing.py` pattern: each package imports one function
+and supplies its own fixtures, so the check logic lives in exactly one place.
+
+    from opentelemetry.semconv_ai._testing_conformance import check_exported_spans
+
+    def test_conforms(span_exporter):
+        check_exported_spans(span_exporter, "anthropic.inference.client",
+                             enforcing=False)
+"""
+
+from typing import Any, FrozenSet, List
+
+from opentelemetry.semconv_ai._contract.extensions import EXTENSIONS
+from opentelemetry.semconv_ai.conformance import Violation, assert_conforms
+
+GEN_AI_OPERATION = "gen_ai.operation.name"
+
+
+def gen_ai_spans(span_exporter: Any) -> List[Any]:
+    """Finished spans that carry GenAI attributes, i.e. those the contract covers."""
+    return [
+        span
+        for span in span_exporter.get_finished_spans()
+        if (span.attributes or {}).get(GEN_AI_OPERATION) is not None
+    ]
+
+
+def check_exported_spans(
+    span_exporter: Any,
+    group_id: str,
+    *,
+    enforcing: bool,
+    extensions: FrozenSet[str] = EXTENSIONS,
+    require_spans: bool = True,
+) -> List[Violation]:
+    """Check every exported GenAI span against one contract group.
+
+    Returns the accumulated violations. In enforcing mode the first violating
+    span raises instead.
+    """
+    spans = gen_ai_spans(span_exporter)
+    if require_spans:
+        assert spans, (
+            f"expected at least one span carrying {GEN_AI_OPERATION}; "
+            "the instrumentation emitted none, so this test would pass vacuously"
+        )
+
+    violations: List[Violation] = []
+    for span in spans:
+        violations.extend(
+            assert_conforms(
+                span, group_id, enforcing=enforcing, extensions=extensions
+            )
+        )
+    return violations
+
+
+__all__ = ["check_exported_spans", "gen_ai_spans"]
+```
+
+The `require_spans` assertion matters: without it, a package whose instrumentation emits
+nothing would report a clean conformance pass. That is the failure mode this whole spec
+exists to prevent.
+
+- [ ] **Step 5: Rewrite the anthropic test to use the helper**
+
+Replace the body of `packages/opentelemetry-instrumentation-anthropic/tests/test_conformance.py`
+so it holds no duplicated check logic:
+
+```python
+"""Conformance of emitted spans against the OTel GenAI semantic conventions.
+
+Warn-only until this package is tagged semconv:enforcing in project.json.
+"""
+
+import pytest
+from opentelemetry.semconv_ai._testing_conformance import check_exported_spans
+
+# Keep in sync with the semconv:* tag in project.json.
+ENFORCING = False
+
+CONTRACT_GROUP = "anthropic.inference.client"
+
+
+@pytest.mark.vcr
+def test_messages_span_conforms(instrument_legacy, anthropic_client, span_exporter):
+    anthropic_client.messages.create(
+        max_tokens=64,
+        messages=[{"role": "user", "content": "Tell me a joke about OpenTelemetry"}],
+        model="claude-3-5-sonnet-20240620",
+    )
+    check_exported_spans(span_exporter, CONTRACT_GROUP, enforcing=ENFORCING)
+
+
+@pytest.mark.vcr
+def test_streaming_span_conforms(instrument_legacy, anthropic_client, span_exporter):
+    """Streaming is where #4362 reports dropped attributes."""
+    stream = anthropic_client.messages.create(
+        max_tokens=64,
+        messages=[{"role": "user", "content": "Tell me a joke about OpenTelemetry"}],
+        model="claude-3-5-sonnet-20240620",
+        stream=True,
+    )
+    for _ in stream:
+        pass
+    check_exported_spans(span_exporter, CONTRACT_GROUP, enforcing=ENFORCING)
+```
+
+Run: `npx nx run opentelemetry-instrumentation-anthropic:test`
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit the helper**
+
+```bash
+git add packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_testing_conformance.py \
+        packages/opentelemetry-instrumentation-anthropic/tests/test_conformance.py
+git commit -m "refactor(semconv): extract shared conformance test helper"
+```
+
+- [ ] **Step 7: Replicate for each remaining in-scope package**
+
+For each package in the in-scope list, one commit per package. Each test file is only the
+imports, `ENFORCING`, `CONTRACT_GROUP`, and one test function per exercised call — all
+check logic stays in the shared helper.
+
+1. Create `tests/test_conformance.py` following the anthropic file above.
+2. Set `CONTRACT_GROUP` per the mapping table.
+3. Use the client fixture, model, and call from that package's existing tests, reusing an existing cassette. **Do not record new cassettes** — this task requires no API keys.
 4. Add `"semconv:warn"` to `project.json` tags.
 5. Run `npx nx run <pkg>:test` and confirm PASS.
 6. Commit: `test(<pkg>): add warn-only semconv conformance checks`
 
 If a package has no cassette exercising a `gen_ai` span, skip it and record it in the rollout doc under "no coverage" rather than inventing a fixture.
 
-- [ ] **Step 5: Write the rollout tracking doc**
+- [ ] **Step 8: Write the rollout tracking doc**
 
 Create `docs/ai/semconv-rollout.md`:
 
@@ -1373,13 +1503,13 @@ Packages with no cassette exercising a `gen_ai` span are listed here and have no
 conformance test yet.
 ```
 
-- [ ] **Step 6: Verify the whole workspace still passes**
+- [ ] **Step 9: Verify the whole workspace still passes**
 
 Run: `npx nx run-many -t test --exclude=sample-app --parallel=2`
 
 Expected: PASS across all packages. Warnings are expected and do not fail the build.
 
-- [ ] **Step 7: Commit the rollout doc**
+- [ ] **Step 10: Commit the rollout doc**
 
 ```bash
 git add docs/ai/semconv-rollout.md
@@ -1473,7 +1603,7 @@ Fixes no violations. The warnings this surfaces are the input to spec 3.
 
 ## Notes for review
 
-- `_contract/generated.py` is generated; review `scripts/gen_contract.py` instead.
+- `_contract/generated.py` is generated; review `_contract/_generator.py` instead.
 - `_contract/extensions.py` documents five `gen_ai.*` attributes OpenLLMetry
   emits that upstream does not define. Each needs a decision: keep as a declared
   extension, or migrate.
