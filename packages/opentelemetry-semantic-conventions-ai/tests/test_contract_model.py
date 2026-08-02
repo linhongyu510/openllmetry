@@ -1,3 +1,5 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from opentelemetry.semconv_ai._contract import (
@@ -44,8 +46,30 @@ class TestSpanSpec:
         )
         assert [a.name for a in spec.required()] == ["gen_ai.operation.name"]
 
-    def test_is_hashable_and_frozen(self):
+    def test_frozen_instances_reject_mutation(self):
         spec = AttributeSpec("gen_ai.operation.name", Level.REQUIRED, None, None)
-        hash(spec)
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             spec.name = "other"
+
+    def test_attribute_spec_with_populated_enum_members_is_hashable(self):
+        spec = AttributeSpec(
+            "gen_ai.operation.name", Level.REQUIRED, None, ("chat", "embeddings")
+        )
+        assert hash(spec) == hash(
+            AttributeSpec(
+                "gen_ai.operation.name", Level.REQUIRED, None, ("chat", "embeddings")
+            )
+        )
+
+    def test_span_spec_holding_attributes_is_hashable(self):
+        """SpanSpec holds Tuple[AttributeSpec, ...]; hashability is only
+        guaranteed if every contained element is itself hashable."""
+        spec = SpanSpec(
+            id="span.gen_ai.inference.client",
+            span_kind="client",
+            attributes=(
+                AttributeSpec("gen_ai.operation.name", Level.REQUIRED, None, ("chat",)),
+                AttributeSpec("gen_ai.request.model", Level.RECOMMENDED, None, None),
+            ),
+        )
+        assert len({spec, spec}) == 1
