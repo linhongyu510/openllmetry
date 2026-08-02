@@ -44,10 +44,17 @@ def build_specs(resolved: Dict) -> Dict[str, SpanSpec]:
 
         attributes = []
         for attr in group.get("attributes", []):
-            # Weaver warns rather than errors when a group omits requirement_level
-            # (e.g. span.gen_ai.fetch_response.client). Recommended is the spec's
-            # own default and keeps such attributes non-blocking.
-            raw_level = attr.get("requirement_level", "recommended")
+            # Weaver back-fills requirement_level during resolution, so every
+            # resolved attribute carries one. A missing key means upstream changed
+            # shape — fail loudly rather than silently downgrading a required
+            # attribute to non-blocking in the conformance harness.
+            try:
+                raw_level = attr["requirement_level"]
+            except KeyError:
+                raise SystemExit(
+                    f"attribute {attr.get('name')!r} in group {group['id']!r} has no "
+                    "requirement_level; the resolved registry changed shape"
+                ) from None
             level, condition = parse_requirement_level(raw_level)
             attributes.append(
                 AttributeSpec(
@@ -60,6 +67,9 @@ def build_specs(resolved: Dict) -> Dict[str, SpanSpec]:
 
         # Sorted so regeneration produces a stable, reviewable diff.
         attributes.sort(key=lambda a: a.name)
+
+        if group["id"] in specs:
+            raise SystemExit(f"duplicate span group id in resolved registry: {group['id']!r}")
 
         specs[group["id"]] = SpanSpec(
             id=group["id"],

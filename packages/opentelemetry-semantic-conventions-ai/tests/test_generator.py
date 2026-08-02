@@ -1,5 +1,10 @@
 import importlib.util
+import json
+import os
+import subprocess
 import sys
+
+import pytest
 
 from opentelemetry.semconv_ai._contract import Level
 from opentelemetry.semconv_ai._contract._generator import build_specs, render
@@ -58,13 +63,13 @@ class TestBuildSpecs:
         names = [a.name for a in spec.attributes]
         assert names == sorted(names)
 
-    def test_group_without_requirement_level_defaults_to_recommended(self):
+    def test_group_without_requirement_level_raises(self):
         resolved = {"groups": [{
             "id": "span.x", "type": "span", "span_kind": "client",
             "attributes": [{"name": "a.b", "type": "string"}],
         }]}
-        spec = build_specs(resolved)["span.x"]
-        assert spec.by_name("a.b").level is Level.RECOMMENDED
+        with pytest.raises(SystemExit):
+            build_specs(resolved)
 
 
 class TestRender:
@@ -73,7 +78,6 @@ class TestRender:
         out = tmp_path / "generated.py"
         out.write_text(render(specs, ref="deadbeef"))
 
-        sys.path.insert(0, str(tmp_path))
         spec_mod = importlib.util.spec_from_file_location("generated", out)
         mod = importlib.util.module_from_spec(spec_mod)
         spec_mod.loader.exec_module(mod)
@@ -84,10 +88,47 @@ class TestRender:
         assert got.by_name("gen_ai.operation.name").level is Level.REQUIRED
         assert got.by_name("gen_ai.operation.name").enum_members == ("chat", "embeddings")
 
-    def test_is_deterministic(self):
-        specs = build_specs(RESOLVED_FIXTURE)
-        assert render(specs, ref="x") == render(specs, ref="x")
+    def test_is_deterministic_across_hash_seeds(self, tmp_path):
+        """Two calls in one process share PYTHONHASHSEED and so cannot detect
+        dict/set ordering leaks. Render in subprocesses with different seeds."""
+        script = tmp_path / "render_once.py"
+        script.write_text(
+            "import json, sys\n"
+            "from opentelemetry.semconv_ai._contract._generator import build_specs, render\n"
+            "sys.stdout.write(render(build_specs(json.loads(sys.argv[1])), ref='x'))\n"
+        )
+        outputs = set()
+        for seed in ("0", "1", "12345"):
+            env = {**os.environ, "PYTHONHASHSEED": seed}
+            result = subprocess.run(
+                [sys.executable, str(script), json.dumps(RESOLVED_FIXTURE)],
+                capture_output=True, text=True, env=env, check=True,
+            )
+            outputs.add(result.stdout)
+        assert len(outputs) == 1, "render output varies with PYTHONHASHSEED"
 
     def test_carries_do_not_edit_banner(self):
         out = render(build_specs(RESOLVED_FIXTURE), ref="x")
         assert "DO NOT EDIT" in out
+
+    def test_renders_conditions_containing_quotes_and_newlines(self, tmp_path):
+        """The real registry contains conditions with apostrophes and newlines."""
+        resolved = {"groups": [{
+            "id": "span.x", "type": "span", "span_kind": "client",
+            "attributes": [
+                {"name": "gen_ai.a", "type": "string",
+                 "requirement_level": {"conditionally_required": "If `server.address` isn't set."}},
+                {"name": "gen_ai.b", "type": "string",
+                 "requirement_level": {"recommended": "line one\nline two"}},
+            ],
+        }]}
+        out = tmp_path / "generated.py"
+        out.write_text(render(build_specs(resolved), ref="x"))
+
+        spec_mod = importlib.util.spec_from_file_location("generated_esc", out)
+        mod = importlib.util.module_from_spec(spec_mod)
+        spec_mod.loader.exec_module(mod)
+
+        got = mod.SPANS["span.x"]
+        assert got.by_name("gen_ai.a").condition == "If `server.address` isn't set."
+        assert got.by_name("gen_ai.b").condition == "line one\nline two"
