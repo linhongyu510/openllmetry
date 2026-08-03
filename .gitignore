@@ -179,7 +179,8 @@ cython_debug/
 chroma.sqlite3
 
 # Claude
-.claude
+.claude/*
+!.claude/skills/
 
 # Development files
 packages/sample-app/sample_app/development/
