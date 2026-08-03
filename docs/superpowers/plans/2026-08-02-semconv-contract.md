@@ -716,6 +716,17 @@ git commit -m "feat(semconv): generate contract module from vendored registry"
 
 ### Task 4: Conformance harness
 
+> **AMENDED AFTER IMPLEMENTATION (owner-approved).** The code block below is the
+> ORIGINAL design and is superseded. Two Critical flaws were found in review and
+> fixed: (1) only 33/372 contract attributes are `required` and
+> `gen_ai.response.finish_reasons` is `recommended` everywhere, so #4362 was
+> undetectable — a per-package `expected` frozenset was added, and a missing
+> promised attribute is a blocking `missing_expected` violation; (2) OTel enums are
+> open, and `gen_ai.provider.name` is `required` + closed to 16 values with no member
+> for ollama/together/replicate — `bad_enum_value` became non-blocking
+> `unknown_enum_value`, excluded from `BLOCKING_KINDS`. Read the committed
+> `conformance.py` for the authoritative implementation, not the block below.
+
 **Files:**
 - Create: `packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/conformance.py`
 - Test: `packages/opentelemetry-semantic-conventions-ai/tests/test_conformance.py`
@@ -1369,13 +1380,20 @@ def check_exported_spans(
     group_id: str,
     *,
     enforcing: bool,
+    expected: FrozenSet[str] = frozenset(),
     extensions: FrozenSet[str] = EXTENSIONS,
     require_spans: bool = True,
 ) -> List[Violation]:
     """Check every exported GenAI span against one contract group.
 
-    Returns the accumulated violations. In enforcing mode the first violating
-    span raises instead.
+    `expected` names the attributes this package promises to emit. Registry
+    requirement levels alone are far too weak to rely on — only ~9% of contract
+    attributes are `required`, and `gen_ai.response.finish_reasons` is merely
+    `recommended` — so a package's own declared promise is what actually catches
+    a dropped attribute. Pass it; do not rely on the contract alone.
+
+    Returns the accumulated violations. In enforcing mode the first span with a
+    blocking violation raises instead.
     """
     spans = gen_ai_spans(span_exporter)
     if require_spans:
@@ -1388,7 +1406,11 @@ def check_exported_spans(
     for span in spans:
         violations.extend(
             assert_conforms(
-                span, group_id, enforcing=enforcing, extensions=extensions
+                span,
+                group_id,
+                enforcing=enforcing,
+                expected=expected,
+                extensions=extensions,
             )
         )
     return violations
@@ -1420,6 +1442,22 @@ ENFORCING = False
 
 CONTRACT_GROUP = "anthropic.inference.client"
 
+# Attributes this package promises to emit on every inference span. The registry
+# marks most of these merely `recommended`, so without this set the harness would
+# not notice them going missing — which is exactly how #4362 (streaming drops
+# finish_reasons) escaped detection. Adding a name here is a commitment.
+EXPECTED = frozenset(
+    {
+        "gen_ai.operation.name",
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.response.model",
+        "gen_ai.response.finish_reasons",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+    }
+)
+
 
 @pytest.mark.vcr
 def test_messages_span_conforms(instrument_legacy, anthropic_client, span_exporter):
@@ -1428,7 +1466,9 @@ def test_messages_span_conforms(instrument_legacy, anthropic_client, span_export
         messages=[{"role": "user", "content": "Tell me a joke about OpenTelemetry"}],
         model="claude-3-5-sonnet-20240620",
     )
-    check_exported_spans(span_exporter, CONTRACT_GROUP, enforcing=ENFORCING)
+    check_exported_spans(
+        span_exporter, CONTRACT_GROUP, enforcing=ENFORCING, expected=EXPECTED
+    )
 
 
 @pytest.mark.vcr
@@ -1442,8 +1482,14 @@ def test_streaming_span_conforms(instrument_legacy, anthropic_client, span_expor
     )
     for _ in stream:
         pass
-    check_exported_spans(span_exporter, CONTRACT_GROUP, enforcing=ENFORCING)
+    check_exported_spans(
+        span_exporter, CONTRACT_GROUP, enforcing=ENFORCING, expected=EXPECTED
+    )
 ```
+
+Every name in `EXPECTED` must be declared by the contract group (or listed in
+`extensions`), or `check_attributes` raises `ValueError` — a typo cannot silently
+pass. Verify each name exists in `SPANS["anthropic.inference.client"]` before adding it.
 
 Run: `npx nx run opentelemetry-instrumentation-anthropic:test`
 
