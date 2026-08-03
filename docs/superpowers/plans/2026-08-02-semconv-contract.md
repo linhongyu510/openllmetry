@@ -733,9 +733,9 @@ git commit -m "feat(semconv): generate contract module from vendored registry"
 
 **Interfaces:**
 - Consumes: `Level`, `AttributeSpec`, `SpanSpec` (Task 2); `SPANS` (Task 3).
-- Produces: `Violation(kind, attribute, detail)`; `check_attributes(attributes, spec, extensions=frozenset()) -> list[Violation]`; `ConformanceWarning`; `assert_conforms(span, group_id, *, enforcing, extensions=frozenset()) -> list[Violation]`. Tasks 5–7 consume `assert_conforms` and `extensions`.
+- Produces: `Violation(kind, attribute, detail)`; `check_attributes(attributes, spec, extensions=frozenset(), expected=frozenset()) -> list[Violation]`; `ConformanceWarning`; `assert_conforms(span, group_id, *, enforcing, extensions=frozenset(), expected=frozenset(), _spans=None) -> list[Violation]`. Tasks 5–7 consume `assert_conforms`, `extensions`, and `expected`.
 
-Violation `kind` is one of exactly three strings: `"missing_required"`, `"undeclared_gen_ai"`, `"bad_enum_value"`.
+Violation `kind` is one of exactly four strings: `"missing_required"`, `"missing_expected"`, `"undeclared_gen_ai"` (all blocking), and `"unknown_enum_value"` (non-blocking). `BLOCKING_KINDS` excludes `"unknown_enum_value"`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1630,6 +1630,9 @@ a clean checkout of committed state.
 
 ```bash
 cd /Users/gal.kleinman/dev/openllmetry
+# require a clean tree before tampering — `git reset --hard` below would
+# otherwise silently discard any uncommitted work
+git diff --quiet && git diff --cached --quiet || { echo "working tree not clean; aborting"; exit 1; }
 GEN=packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/generated.py
 # weaken the contract the way a bad hand-edit would
 sed -i '' "0,/Level.REQUIRED/s//Level.OPT_IN/" "$GEN"
@@ -1639,7 +1642,9 @@ git reset --hard HEAD~1
 ```
 
 Expected: non-zero exit with a diff showing the weakened level being reverted. If it exits
-0, the check does not work — investigate before proceeding.
+0, the check does not work — investigate before proceeding. The tree must be clean before
+this runs, since the tamper is reverted with `git reset --hard`, which would otherwise
+destroy uncommitted work.
 
 - [ ] **Step 4: Commit**
 

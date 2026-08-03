@@ -11,7 +11,7 @@ FILTERED := $(BUILD)/sc-upstream-filtered
 WEAVER := docker run --rm -u $(shell id -u):$(shell id -g) \
 	-v "$(SELF_DIR):/w" -w /w -e HOME=/tmp otel/weaver:$(WEAVER_VERSION)
 
-.PHONY: vendor resolve generate check clean
+.PHONY: vendor resolve generate check verify-vendor clean
 
 ## Fetch the pinned registry into registry/ .
 vendor:
@@ -22,6 +22,25 @@ vendor:
 	cp -r $(BUILD)/genai/model $(REGISTRY)
 	rm -rf $(BUILD)/genai
 	@echo "vendored $(SEMCONV_GENAI_REF) -> $(REGISTRY)/"
+
+## Prove registry/ still matches the pinned upstream SHA. `check` only proves
+## generated.py matches registry/ -- it never proves registry/ itself hasn't been
+## hand-edited. This clones the pin fresh into a scratch dir and diffs it against
+## the committed registry/ tree, so a weakened vendored spec can't sneak through
+## alongside a regenerated artifact.
+verify-vendor:
+	rm -rf $(BUILD)/verify-vendor
+	mkdir -p $(BUILD)/verify-vendor
+	git clone -q $(SEMCONV_GENAI_REPO) $(BUILD)/verify-vendor/genai
+	cd $(BUILD)/verify-vendor/genai && git checkout -q $(SEMCONV_GENAI_REF)
+	@if ! diff -r --exclude=.build $(BUILD)/verify-vendor/genai/model $(REGISTRY); then \
+		echo ""; \
+		echo "registry/ does not match upstream $(SEMCONV_GENAI_REF) -- run 'make -C .semconv vendor' to refresh it"; \
+		rm -rf $(BUILD)/verify-vendor; \
+		exit 1; \
+	fi
+	rm -rf $(BUILD)/verify-vendor
+	@echo "registry/ matches upstream $(SEMCONV_GENAI_REF)"
 
 ## Build the filtered upstream dependency the registry manifest points at.
 $(FILTERED):

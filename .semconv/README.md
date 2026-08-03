@@ -2,7 +2,8 @@
 
 This directory vendors https://github.com/open-telemetry/semantic-conventions-genai
 at the SHA pinned in `versions.env`. It is the contract every instrumentation
-package is tested against.
+package with conformance coverage is tested against. See
+`docs/ai/semconv-rollout.md` for which packages currently have that coverage.
 
 `registry/` is committed. `.build/` is scratch and gitignored.
 
