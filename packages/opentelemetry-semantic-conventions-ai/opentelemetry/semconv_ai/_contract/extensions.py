@@ -27,8 +27,16 @@ EXTENSION_RATIONALE = {
         "Request headers captured for debugging. Opt-in only. No upstream equivalent."
     ),
     "gen_ai.is_streaming": (
-        "Whether the request used streaming. Upstream expresses this through span "
-        "structure rather than an attribute."
+        "Whether the request used streaming. Upstream defines the equivalent as "
+        "`gen_ai.request.stream`, so this is a rename, not a genuine gap: migrating "
+        "to the contract name is the intended path. Retained meanwhile because "
+        "existing dashboards query it."
+    ),
+    "gen_ai.prompt": (
+        "Legacy prompt content attribute, the input-side counterpart to "
+        "`gen_ai.completion`, predating upstream's `gen_ai.input.messages`. Retained "
+        "for backwards compatibility; migration to `gen_ai.input.messages` is the "
+        "intended path."
     ),
     "gen_ai.completion": (
         "Legacy prompt/completion content attribute, predating upstream's "
