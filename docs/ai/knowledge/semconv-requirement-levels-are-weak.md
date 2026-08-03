@@ -24,7 +24,9 @@ Measured against the pinned registry (18 span groups, 372 attribute entries):
 | `recommended` | 167 (44.9%) | no |
 | `opt_in` | 54 (14.5%) | no |
 
-Only 5 of 80 unique attribute names are ever presence-checked by the contract alone.
+Only 7 of 80 unique attribute names are ever presence-checked by the contract alone:
+`aws.bedrock.guardrail.id`, `gen_ai.operation.name`, `gen_ai.provider.name`,
+`gen_ai.request.model`, `gen_ai.response.id`, `gen_ai.tool.name`, `mcp.method.name`.
 A package emitting nothing but `gen_ai.operation.name` and `gen_ai.provider.name` passes
 as fully conformant.
 

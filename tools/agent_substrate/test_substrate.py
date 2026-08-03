@@ -19,7 +19,8 @@ REPO_ROOT = Path(
 
 PROCEDURES = REPO_ROOT / "docs" / "ai" / "procedures"
 KNOWLEDGE = REPO_ROOT / "docs" / "ai" / "knowledge"
-SKILLS = REPO_ROOT / ".claude" / "skills"
+CLAUDE_DIR = REPO_ROOT / ".claude"
+SKILLS = CLAUDE_DIR / "skills"
 
 MAX_WRAPPER_LINES = 15
 
@@ -49,15 +50,21 @@ class TestCanonicalInstructions:
 
 class TestNoKnowledgeInVendorDirs:
     def test_claude_dir_contains_only_pointers(self):
-        """Any substantial file under .claude/ is knowledge that belongs in docs/ai/."""
+        """Any substantial file under .claude/ is knowledge that belongs in docs/ai/.
+
+        This walks the whole `.claude/` tree, not just `.claude/skills/` — a future
+        `.claude/commands/*.md` or `.claude/agents/*.md` with real procedural content
+        must be caught here too. Non-markdown files (e.g. settings.local.json) are
+        not pointers/wrappers by convention and are left alone.
+        """
         offenders = []
-        for path in SKILLS.rglob("*.md"):
+        for path in CLAUDE_DIR.rglob("*.md"):
             lines = path.read_text().splitlines()
             if len(lines) > MAX_WRAPPER_LINES:
                 offenders.append(f"{path.relative_to(REPO_ROOT)} ({len(lines)} lines)")
         assert not offenders, (
             "these files under .claude/ exceed a pointer's size, so they hold content "
-            f"that belongs in docs/ai/procedures/: {offenders}"
+            f"that belongs in docs/ai/procedures/ instead of staying in .claude/: {offenders}"
         )
 
     def test_every_skill_wrapper_points_at_a_real_procedure(self):
@@ -157,4 +164,23 @@ class TestOkfBundle:
         for path in self._concepts():
             assert "generated:" in path.read_text(), (
                 f"{path.name} has no `generated:` block, so its trust tier is unknowable"
+            )
+
+    def test_concepts_carry_an_expiry(self):
+        """Empirical facts rot. A concept with no `stale_after` is trusted forever,
+        which is exactly the failure mode this bundle exists to avoid."""
+        for path in self._concepts():
+            text = path.read_text()
+            frontmatter = text.split("---", 2)[1]
+            stale_line = next(
+                (line for line in frontmatter.splitlines() if line.startswith("stale_after:")),
+                None,
+            )
+            assert stale_line is not None, (
+                f"{path.name} has no `stale_after:` date, so it would be trusted forever "
+                "even as the fact it records rots"
+            )
+            assert stale_line.split(":", 1)[1].strip(), (
+                f"{path.name} declares `stale_after:` with an empty value, so it would be "
+                "trusted forever even as the fact it records rots"
             )
