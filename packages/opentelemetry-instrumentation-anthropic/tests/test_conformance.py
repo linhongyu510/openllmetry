@@ -4,6 +4,17 @@ Warn-only until this package is tagged semconv:enforcing in project.json.
 
 Reuses existing cassettes from `test_messages.py` and `test_structured_outputs.py`
 instead of recording new ones: this test module needs no API keys to run.
+
+WARNING: cassette matching here is unguarded. VCR's default `match_on` compares
+only (method, scheme, host, port, path, query) — the request body is not checked,
+and every call in this package posts to the same `/v1/messages` path. Matching on
+`body` was tried to close this gap but proved brittle: the installed anthropic SDK
+rewrites `output_format` into `output_config.format` on the wire independent of what
+was recorded, so a byte-for-byte body match breaks across SDK versions even when
+nothing about the test's intent changed. If you change a source test referenced by
+a `default_cassette` marker below (model, prompt, or request shape), you must mirror
+that change here too — otherwise this module will keep silently replaying the old,
+stale cassette instead of failing.
 """
 
 import os
