@@ -1623,14 +1623,23 @@ Expected: exit 0, no output from `git diff`.
 
 Prove the check is not vacuous:
 
+The tamper must be COMMITTED. `make check` runs `generate` first, which overwrites an
+uncommitted edit before the diff ever runs — so an uncommitted tamper always passes and
+proves nothing. The real threat is a hand-edit that got merged, and CI always starts from
+a clean checkout of committed state.
+
 ```bash
 cd /Users/gal.kleinman/dev/openllmetry
-echo "# tampered" >> packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/generated.py
+GEN=packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/generated.py
+# weaken the contract the way a bad hand-edit would
+sed -i '' "0,/Level.REQUIRED/s//Level.OPT_IN/" "$GEN"
+git add "$GEN" && git commit -q -m "TEMP tamper test"
 make -C .semconv check; echo "EXIT=$?"
-git checkout -- packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/_contract/generated.py
+git reset --hard HEAD~1
 ```
 
-Expected: `EXIT=1` with a diff shown, then the file is restored. If it exits 0, the check does not work — investigate before proceeding.
+Expected: non-zero exit with a diff showing the weakened level being reverted. If it exits
+0, the check does not work — investigate before proceeding.
 
 - [ ] **Step 4: Commit**
 
