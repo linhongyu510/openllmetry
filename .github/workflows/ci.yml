@@ -229,3 +229,26 @@ jobs:
       # from .semconv/registry/ without anyone noticing.
       - name: Verify committed contract is current
         run: make -C .semconv check
+
+  agent-substrate:
+    name: Agent Substrate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+
+      - run: pip install pytest
+
+      # Enforces the substrate's portability invariants: CLAUDE.md stays a symlink,
+      # no knowledge accumulates under .claude/, and the OKF bundle stays valid.
+      - name: Verify agent substrate
+        run: python3 -m pytest tools/agent_substrate/test_substrate.py -v
