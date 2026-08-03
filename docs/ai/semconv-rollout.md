@@ -60,6 +60,35 @@ All six wired, all tagged `semconv:warn`:
 | together | `span.gen_ai.inference.client` | No `gen_ai.operation.name`/`gen_ai.provider.name`; keyed on `gen_ai.system`, like ollama/writer. |
 | sagemaker | `aws.bedrock.inference.client` (closest available; no dedicated SageMaker group exists) | Minimal instrumentation — the only `gen_ai.*` span attribute at all is `gen_ai.request.model`; keyed on that instead of the default. |
 
+### Batch 3 (this batch)
+
+Three of four wired, all tagged `semconv:warn`. Unlike batches 1–2, these
+packages' cassettes live under `tests/traces/cassettes/` (and/or
+`tests/metrics/cassettes/`), not the flat `tests/cassettes/`, so
+`test_conformance.py` lives under `tests/traces/` for each — that's where the
+relevant fixtures and default cassette directory actually are.
+
+| Package | Contract group | Notes |
+|---|---|---|
+| openai | `openai.inference.client` | Full OTel v2 attribute set (`gen_ai.operation.name`, `gen_ai.provider.name`, response id/model, finish_reasons) on both the legacy and streaming paths. |
+| bedrock | `aws.bedrock.inference.client` | `gen_ai.response.model`/`gen_ai.response.id` excluded from `EXPECTED`: the legacy Claude-2 `invoke_model` completion path never returns them, only Claude-3+. Fixtures come from the parent `tests/conftest.py` — bedrock has no `tests/traces/conftest.py` of its own. |
+| groq | `span.gen_ai.inference.client` | `gen_ai.response.model`/`gen_ai.response.id` present on the non-streaming span but absent from the streaming one, so excluded from `EXPECTED`. |
+
+**watsonx — skipped.** The instrumentation patches `ibm_watsonx_ai.foundation_models`,
+but the package's own test dependency is the older, differently-named
+`ibm-watson-machine-learning`, which does not provide that module at all. Every
+existing test in `tests/traces/test_generate.py` degrades through a
+`try/except ImportError` fixture (`watson_ai_model` becomes `None`) into an
+early `return` that asserts nothing — the whole suite has been passing
+vacuously, exercising zero cassette interactions, independent of anything in
+this batch. Confirmed in this environment: `import ibm_watsonx_ai` fails, and
+even the legacy `ibm_watson_machine_learning` package fails to import on its
+own (`numpy`/`pandas` ABI mismatch: "numpy.dtype size changed, may indicate
+binary incompatibility"). Fixing this needs a new test dependency
+(`ibm-watsonx-ai`) plus likely a numpy/pandas pin and re-validating the
+existing cassettes against the newer SDK's request shapes — well beyond a
+cassette-reuse-only, tests-only batch. Left in "No coverage" below.
+
 ## Out of scope
 
 Vector-store instrumentations emit `db.*` attributes, which the GenAI
@@ -76,13 +105,10 @@ Packages that emit `gen_ai.*` but have no conformance test yet:
   cassettes anywhere under `tests/`. Wiring these up requires recording new
   cassettes first, which needs real API keys — out of scope for a
   cassette-reuse-only batch.
-- **bedrock, groq, openai, watsonx** — originally assumed to have zero
-  cassettes too, but that turned out to be wrong: each already has cassettes
-  under `tests/traces/cassettes/` and/or `tests/metrics/cassettes/` (a
-  `tests/traces` + `tests/metrics` split rather than the flat `tests/cassettes`
-  layout batches 1–2 used). These four do **not** need new recordings and are
-  good candidates for the next batch — verify this if you pick them up, this
-  note reflects one point-in-time check.
+- **watsonx** — has cassettes under `tests/traces/cassettes/` and
+  `tests/metrics/cassettes/`, but they cannot be exercised in this environment:
+  see the batch 3 skip note above. Not a zero-cassette gap like the four
+  above; a missing/broken test dependency instead.
 
 ## Known limitations
 
@@ -112,3 +138,5 @@ it going missing. Packages found NOT to emit it as a top-level span attribute:
   is intentional, not a mistake.
 - **llamaindex** and **openai-agents** (batch 2) both emit it correctly — no
   gap.
+- **openai, bedrock, groq** (batch 3) all emit it correctly on every wired
+  path (legacy/non-streaming and streaming alike) — no gap.
