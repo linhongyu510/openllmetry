@@ -11,6 +11,13 @@ which forces removal rather than indefinite divergence.
 
 Prefer a non-`gen_ai.*` namespace (`traceloop.*`) for anything genuinely
 OpenLLMetry-specific; the harness ignores other namespaces entirely.
+
+Known limitation: matching is exact, so an entry here covers only that literal
+attribute name. The legacy content attributes are emitted in indexed form
+(`gen_ai.prompt.0.content`, `gen_ai.completion.0.role`, ...), which these entries
+do NOT cover — those still surface as `undeclared_gen_ai`. Until the harness
+supports prefix matching, a content-capturing package cannot reach enforcing mode
+through this file alone.
 """
 
 EXTENSION_RATIONALE = {

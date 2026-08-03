@@ -20,8 +20,8 @@ its `project.json`:
 List packages by tag:
 
 ```bash
-npx nx show projects --with-tag semconv:warn
-npx nx show projects --with-tag semconv:enforcing
+npx nx show projects --projects tag:semconv:warn
+npx nx show projects --projects tag:semconv:enforcing
 ```
 
 ## Flipping a package to enforcing
@@ -83,6 +83,14 @@ Packages that emit `gen_ai.*` but have no conformance test yet:
   layout batches 1–2 used). These four do **not** need new recordings and are
   good candidates for the next batch — verify this if you pick them up, this
   note reflects one point-in-time check.
+
+## Known limitations
+
+`extensions.py` matches attribute names exactly, so declaring `gen_ai.prompt`
+or `gen_ai.completion` does not cover the indexed forms actually emitted
+(`gen_ai.prompt.0.content`, `gen_ai.completion.0.role`, ...) — a
+content-capturing package still gets blocking `undeclared_gen_ai` violations on
+those and cannot reach enforcing mode through extension declarations alone.
 
 ## Known gaps: `gen_ai.response.finish_reasons` not emitted
 
