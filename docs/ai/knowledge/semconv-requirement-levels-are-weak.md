@@ -35,7 +35,8 @@ declare it. Issue #4362 — streaming dropping `finish_reasons` — is therefore
 a contract-levels-only check.
 
 **Consequence:** each package declares an `EXPECTED` frozenset in its
-`tests/test_conformance.py` naming the attributes it promises to emit. A missing promise
+`test_conformance.py` (at `tests/test_conformance.py`, or `tests/traces/test_conformance.py`
+for the batch-3 packages) naming the attributes it promises to emit. A missing promise
 is a blocking `missing_expected` violation regardless of the registry's level. The
 contract supplies the vocabulary; the package supplies the commitment.
 

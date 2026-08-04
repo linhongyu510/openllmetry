@@ -20,8 +20,10 @@ is a good template.
 
 ## Wiring
 
-`project.json` targets are identical across all packages. Copy from the template and
-change only `name`, `sourceRoot`, and the `cwd` values. Add `"instrumentation"` to `tags`.
+`project.json` targets are copied verbatim across all packages — do not change the
+target definitions themselves. Only the identity fields are package-specific: set
+`name`, `sourceRoot`, and the `cwd` values to match the new package, and add
+`"instrumentation"` to `tags`.
 
 If the package depends on the local semconv package, add to `pyproject.toml`:
 

@@ -36,6 +36,14 @@ uv run <command>
 Tests utilize VCR cassettes for API calls.
 
 ### Commands
+The default way to run a package's tests is through Nx:
+```bash
+npx nx run <package-name>:test
+```
+
+Reach for `uv run pytest` directly, from inside the package directory, only when
+Nx's `test` target is not the right tool for the job — e.g. picking a VCR
+record mode, or running a single test file:
 ```bash
 # Run tests normally (uses existing cassettes)
 uv run pytest tests/
@@ -52,7 +60,7 @@ uv run pytest tests/ --record-mode=once
 # Run tests without recording (fails if cassettes missing)
 uv run pytest tests/ --record-mode=none
 
-# Run specific test files
+# Run a single test file inside a package
 uv run pytest tests/test_agents.py --record-mode=once
 ```
 
@@ -87,7 +95,11 @@ https://opentelemetry.io/docs/specs/semconv/gen-ai/
 Instrumentation packages should leverage the semantic conventions package. Their purpose is to instrument AI-related libraries and generate spans and tracing data compliant with OpenTelemetry semantic conventions.
 
 ## Code Quality
-Ruff is used for code linting. Configuration is in each package's pyproject.toml under `[tool.ruff]`.
+Ruff is used for code linting. Run it through Nx, the default path:
+```bash
+npx nx run <package-name>:lint
+```
+Configuration is in each package's pyproject.toml under `[tool.ruff]`.
 
 ## For agents working in this repo
 

@@ -7,6 +7,7 @@ file. These assertions are the enforcement; the prose in AGENTS.md is not.
 import glob
 import os
 import subprocess
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -50,21 +51,35 @@ class TestCanonicalInstructions:
 
 class TestNoKnowledgeInVendorDirs:
     def test_claude_dir_contains_only_pointers(self):
-        """Any substantial file under .claude/ is knowledge that belongs in docs/ai/.
+        """Every file under .claude/ must be an allowlisted pointer, never knowledge.
 
         This walks the whole `.claude/` tree, not just `.claude/skills/` — a future
         `.claude/commands/*.md` or `.claude/agents/*.md` with real procedural content
-        must be caught here too. Non-markdown files (e.g. settings.local.json) are
-        not pointers/wrappers by convention and are left alone.
+        must be caught here too. Rather than only rejecting oversized `.md` files
+        (which lets a short note, or any non-markdown file, carry real knowledge and
+        pass), this is an allowlist: the only files permitted anywhere under
+        `.claude/` are `SKILL.md` wrappers directly under `.claude/skills/<name>/`,
+        and `.claude/settings.local.json`. Wrappers still must not exceed
+        MAX_WRAPPER_LINES.
         """
         offenders = []
-        for path in CLAUDE_DIR.rglob("*.md"):
-            lines = path.read_text().splitlines()
-            if len(lines) > MAX_WRAPPER_LINES:
-                offenders.append(f"{path.relative_to(REPO_ROOT)} ({len(lines)} lines)")
+        for path in CLAUDE_DIR.rglob("*"):
+            if path.is_dir():
+                continue
+            rel = path.relative_to(REPO_ROOT)
+            is_settings_local = path == CLAUDE_DIR / "settings.local.json"
+            is_skill_wrapper = path.name == "SKILL.md" and path.parent.parent == SKILLS
+            if is_settings_local:
+                continue
+            if is_skill_wrapper:
+                lines = path.read_text().splitlines()
+                if len(lines) > MAX_WRAPPER_LINES:
+                    offenders.append(f"{rel} ({len(lines)} lines) exceeds a pointer's size")
+                continue
+            offenders.append(f"{rel} is not an allowlisted pointer file")
         assert not offenders, (
-            "these files under .claude/ exceed a pointer's size, so they hold content "
-            f"that belongs in docs/ai/procedures/ instead of staying in .claude/: {offenders}"
+            "these paths under .claude/ hold content that belongs in docs/ai/ instead: "
+            f"{offenders}"
         )
 
     def test_every_skill_wrapper_points_at_a_real_procedure(self):
@@ -180,7 +195,15 @@ class TestOkfBundle:
                 f"{path.name} has no `stale_after:` date, so it would be trusted forever "
                 "even as the fact it records rots"
             )
-            assert stale_line.split(":", 1)[1].strip(), (
+            value = stale_line.split(":", 1)[1].strip()
+            assert value, (
                 f"{path.name} declares `stale_after:` with an empty value, so it would be "
                 "trusted forever even as the fact it records rots"
             )
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                pytest.fail(
+                    f"{path.name} declares `stale_after: {value}`, which is not a valid "
+                    "ISO-8601 date, so the expiry cannot be relied on"
+                )
