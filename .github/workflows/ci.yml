@@ -1,8 +1,9 @@
 name: CI
 
 on:
-  # TEMPORARY: base-branch filter lifted so stacked PRs get CI. Restore before merge.
   pull_request:
+    branches:
+      - "main"
   push:
     branches:
       - "main"
