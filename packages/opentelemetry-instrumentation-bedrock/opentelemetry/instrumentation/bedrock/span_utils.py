@@ -1094,6 +1094,6 @@ def converse_usage_record(span, response, metric_params):
     if cache_write_tokens is not None:
         _set_span_attribute(
             span,
-            SpanAttributes.GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS,
+            GenAIAttributes.GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS,
             cache_write_tokens,
         )
